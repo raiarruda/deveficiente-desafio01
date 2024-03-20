@@ -1,13 +1,22 @@
+using FluentValidation;
+using LivrariaTech;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+
+builder.Services.AddEndpointsApiExplorer();
+
+builder.Services.AddDbContext<LivrariaBaseDados>(options => options.UseInMemoryDatabase("autores"));
+
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddScoped<IValidator<AutorModel>, AutorModelValidator>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -16,29 +25,46 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
 
-app.MapGet("/weatherforecast", () =>
+
+app.MapPost("/autores", async (AutorModel autor, LivrariaBaseDados db, IValidator<AutorModel> validacao) =>
 {
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast")
+    var resultadoValidacao = await validacao.ValidateAsync(autor);
+    if (!resultadoValidacao.IsValid)
+    {
+        return Results.BadRequest(resultadoValidacao.Errors.Select(e => e.ErrorMessage));
+    }
+
+    await db.Autor.AddAsync(autor);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"autorAtualizado/{autor.Id}", autor);
+}
+)
 .WithOpenApi();
+
+app.MapGet("/autores", async (LivrariaBaseDados db) => await db.Autor.ToListAsync()).WithOpenApi();
+
+
+app.MapGet("/autores/{id}", async (LivrariaBaseDados db, int id) => await db.Autor.FindAsync(id)).WithOpenApi();
+
+app.MapPut("/autores/{id}", async (LivrariaBaseDados db, AutorModel autorAtualizado, IValidator < AutorModel > validacao, int id) =>
+{
+    var autor = await db.Autor.FindAsync(id);
+    if (autor is null) return Results.NotFound();
+    autor.Nome = autorAtualizado.Nome ?? autor.Nome;
+    autor.Email = autorAtualizado.Email ?? autor.Email;
+    autor.Descricao = autorAtualizado.Descricao ?? autor.Descricao;
+    autor.DataAtualizacao = DateTime.Now;
+    var resultadoValidacao = await validacao.ValidateAsync(autor);
+
+    if (!resultadoValidacao.IsValid)
+    {
+        return Results.BadRequest(resultadoValidacao.Errors.Select(e => e.ErrorMessage));
+    }
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
 
 app.Run();
 
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
